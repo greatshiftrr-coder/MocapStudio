@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>60FPS Holistic Mocap</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        body { margin: 0; background: #050505; color: #e2e8f0; overflow: hidden; font-family: 'Inter', sans-serif; }
+        .ui-panel { background: rgba(10, 10, 10, 0.85); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.05); }
+        .stats-box { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); }
+        #webcam { transform: scaleX(-1); border-radius: 12px; }
+        .rec-pulse { animation: pulse 1s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
+    </style>
+</head>
+<body>
+
+    <!-- Loading Screen -->
+    <div id="loader" class="fixed inset-0 z-[100] flex items-center justify-center bg-black">
+        <div class="text-center space-y-6">
+            <div class="inline-block w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+            <h2 class="text-xl font-bold tracking-tighter uppercase text-blue-400">Loading 60FPS Engine</h2>
+            <button id="start-btn" class="hidden px-8 py-3 bg-blue-600 hover:bg-blue-500 rounded-full font-bold transition-all shadow-lg">START SESSION</button>
+            <p id="load-msg" class="text-xs text-slate-500 uppercase tracking-widest">Warming up GPU...</p>
+        </div>
+    </div>
+
+    <!-- Main Workspace -->
+    <div class="fixed inset-0 flex flex-col md:flex-row">
+        <!-- 3D Viewport -->
+        <div id="viewport" class="flex-grow relative overflow-hidden">
+            <div id="logs" class="absolute top-6 left-6 pointer-events-none text-[10px] text-blue-400/60 font-mono"></div>
+            
+            <div id="rec-indicator" class="hidden absolute top-6 right-6 px-4 py-2 rounded-full bg-red-600/20 border border-red-500/30 flex items-center gap-2">
+                <span class="w-2 h-2 bg-red-500 rounded-full rec-pulse"></span>
+                <span class="text-[10px] font-black uppercase tracking-tighter">Capturing Data</span>
+            </div>
+        </div>
+
+        <!-- Sidebar -->
+        <div class="w-full md:w-80 ui-panel p-6 flex flex-col gap-6">
+            <div class="relative aspect-video bg-black rounded-xl ring-1 ring-white/10 overflow-hidden">
+                <video id="webcam" class="w-full h-full object-cover opacity-50" autoplay playsinline muted></video>
+            </div>
+
+            <div class="space-y-4 flex-grow">
+                <div class="grid grid-cols-2 gap-2">
+                    <div class="stats-box p-3 rounded-lg text-center">
+                        <p class="text-[9px] text-slate-500 uppercase">System FPS</p>
+                        <p id="fps-val" class="text-xl font-black text-blue-500">0</p>
+                    </div>
+                    <div class="stats-box p-3 rounded-lg text-center">
+                        <p class="text-[9px] text-slate-500 uppercase">Frames Rec</p>
+                        <p id="frame-count" class="text-xl font-black text-emerald-500">0</p>
+                    </div>
+                </div>
+
+                <div class="pt-4 space-y-2">
+                    <button id="rec-btn" class="w-full py-4 bg-white text-black hover:bg-slate-200 rounded-xl font-black text-sm uppercase transition-all transform active:scale-95">
+                        Start Recording
+                    </button>
+                    <button id="download-btn" class="hidden w-full py-4 border border-white/20 hover:bg-white/5 rounded-xl font-bold text-sm uppercase transition-all">
+                        Download JSON
+                    </button>
+                </div>
+            </div>
+
+            <div class="text-[9px] text-slate-600 space-y-1">
+                <p>• GPU ACCELERATION: <span class="text-blue-500">ENABLED</span></p>
+                <p>• MODEL: HOLISTIC_LITE_V5</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let scene, camera, renderer, bodyPoints = {}, hands = {L:[], R:[]};
+        let holistic, isRecording = false, recordingData = [];
+        let frames = 0, lastFpsUpdate = 0;
+
+        const POSE_IDS = [11,12,13,14,15,16,23,24,25,26,27,28];
+
+        function log(m) {
+            const l = document.getElementById('logs');
+            l.innerHTML = `> ${m}<br>` + l.innerHTML.split('<br>').slice(0,5).join('<br>');
+        }
+
+        async function init() {
+            try {
+                log("Requesting GPU...");
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { width: 1280, height: 720, frameRate: { ideal: 60 } } 
+                });
+                const video = document.getElementById('webcam');
+                video.srcObject = stream;
+                await video.play();
+
+                // Start 3D
+                setup3D();
+
+                // Start Holistic
+                holistic = new Holistic({
+                    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
+                });
+
+                holistic.setOptions({
+                    modelComplexity: 0, // Lite mode for 60fps
+                    smoothLandmarks: true,
+                    minDetectionConfidence: 0.5,
+                    minTrackingConfidence: 0.5
+                });
+
+                holistic.onResults(handleResults);
+
+                const cam = new Camera(video, {
+                    onFrame: async () => { await holistic.send({image: video}); },
+                    width: 640, height: 480
+                });
+                
+                cam.start();
+                log("Engine Warm.");
+                document.getElementById('load-msg').innerText = "Ready to Track";
+                document.getElementById('start-btn').classList.remove('hidden');
+                document.getElementById('start-btn').onclick = () => {
+                    document.getElementById('loader').style.display = 'none';
+                    animate();
+                };
+
+            } catch (e) {
+                log("FAIL: " + e.message);
+                document.getElementById('load-msg').innerText = "Hardware Error: " + e.message;
+            }
+        }
+
+        function setup3D() {
+            const container = document.getElementById('viewport');
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(50, container.clientWidth/container.clientHeight, 0.1, 100);
+            camera.position.set(0, 1.2, 3);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            container.appendChild(renderer.domElement);
+
+            // Lighting
+            scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+            const spotlight = new THREE.PointLight(0x4f46e5, 2, 10);
+            spotlight.position.set(2, 2, 2);
+            scene.add(spotlight);
+            scene.add(new THREE.GridHelper(10, 20, 0x222222, 0x111111));
+
+            // Rig Creation
+            const bodyMat = new THREE.MeshStandardMaterial({ color: 0x3b82f6 });
+            const handMat = new THREE.MeshStandardMaterial({ color: 0x10b981 });
+            const geo = new THREE.SphereGeometry(0.04, 12, 12);
+            const handGeo = new THREE.SphereGeometry(0.015, 8, 8);
+
+            POSE_IDS.forEach(id => {
+                const m = new THREE.Mesh(geo, bodyMat);
+                scene.add(m);
+                bodyPoints[id] = m;
+            });
+
+            for(let i=0; i<21; i++) {
+                const l = new THREE.Mesh(handGeo, handMat);
+                const r = new THREE.Mesh(handGeo, handMat);
+                scene.add(l); scene.add(r);
+                hands.L.push(l); hands.R.push(r);
+            }
+        }
+
+        function handleResults(res) {
+            // Update FPS
+            frames++;
+            const now = performance.now();
+            if(now - lastFpsUpdate > 1000) {
+                document.getElementById('fps-val').innerText = frames;
+                frames = 0;
+                lastFpsUpdate = now;
+            }
+
+            // Map Pose
+            if(res.poseLandmarks) {
+                POSE_IDS.forEach(id => {
+                    const lm = res.poseLandmarks[id];
+                    bodyPoints[id].position.set((0.5 - lm.x)*3, (0.5 - lm.y)*3 + 1, -lm.z*2);
+                });
+            }
+
+            // Map Hands
+            const mapHand = (lms, meshes) => {
+                if(lms) {
+                    lms.forEach((lm, i) => {
+                        meshes[i].visible = true;
+                        meshes[i].position.set((0.5 - lm.x)*3, (0.5 - lm.y)*3 + 1, -lm.z*2);
+                    });
+                } else {
+                    meshes.forEach(m => m.visible = false);
+                }
+            };
+            mapHand(res.leftHandLandmarks, hands.L);
+            mapHand(res.rightHandLandmarks, hands.R);
+
+            // Recording
+            if(isRecording) {
+                recordingData.push({
+                    t: Date.now(),
+                    p: res.poseLandmarks,
+                    lh: res.leftHandLandmarks,
+                    rh: res.rightHandLandmarks
+                });
+                document.getElementById('frame-count').innerText = recordingData.length;
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            renderer.render(scene, camera);
+        }
+
+        // Controls
+        document.getElementById('rec-btn').onclick = function() {
+            isRecording = !isRecording;
+            const indicator = document.getElementById('rec-indicator');
+            const dlBtn = document.getElementById('download-btn');
+
+            if(isRecording) {
+                recordingData = [];
+                this.innerText = "Stop Capture";
+                this.className = "w-full py-4 bg-red-600 text-white rounded-xl font-black text-sm uppercase transition-all";
+                indicator.classList.remove('hidden');
+                dlBtn.classList.add('hidden');
+                log("RECORDING...");
+            } else {
+                this.innerText = "Start Recording";
+                this.className = "w-full py-4 bg-white text-black rounded-xl font-black text-sm uppercase transition-all";
+                indicator.classList.add('hidden');
+                if(recordingData.length > 0) {
+                    dlBtn.classList.remove('hidden');
+                    log(`SAVED ${recordingData.length} FRAMES`);
+                }
+            }
+        };
+
+        document.getElementById('download-btn').onclick = () => {
+            log("Packaging JSON...");
+            const dataString = JSON.stringify(recordingData);
+            const blob = new Blob([dataString], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `mocap_${new Date().toISOString().slice(0,19)}.json`;
+            link.click();
+            URL.revokeObjectURL(url);
+            log("Download Started.");
+        };
+
+        window.onload = init;
+        window.onresize = () => {
+            const container = document.getElementById('viewport');
+            camera.aspect = container.clientWidth/container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        };
+    </script>
+</body>
+</html>
+
