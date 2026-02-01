@@ -2,109 +2,84 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Mocap Studio Pro</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Android Mocap Pro</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
-        body { margin: 0; background: #020617; color: #f8fafc; overflow: hidden; font-family: sans-serif; }
-        .glass { background: rgba(15, 23, 42, 0.9); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.1); }
-        video { transform: scaleX(-1); border-radius: 12px; }
-        .recording-pulse { animation: pulse 1.5s infinite; }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        body { margin: 0; background: #000; color: #fff; overflow: hidden; touch-action: none; }
+        .mobile-btn { -webkit-tap-highlight-color: transparent; }
+        #webcam { transform: scaleX(-1); visibility: hidden; position: absolute; }
+        canvas { display: block; }
     </style>
 </head>
-<body>
+<body class="bg-slate-950 font-sans">
 
-    <!-- Permission / Loading Overlay -->
-    <div id="overlay" class="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950 px-6">
-        <div class="max-w-md w-full glass p-8 rounded-3xl text-center space-y-6 shadow-2xl">
-            <h1 class="text-3xl font-black tracking-tighter italic">MOCAP <span class="text-blue-500">PRO</span></h1>
-            <p id="status-text" class="text-slate-400 text-sm">Waiting for hardware permissions...</p>
-            
-            <div id="action-area" class="space-y-4">
-                <button id="init-btn" class="w-full py-4 bg-blue-600 hover:bg-blue-500 rounded-2xl font-bold transition-all shadow-lg active:scale-95">
-                    ENABLE CAMERA
-                </button>
-            </div>
-
-            <div id="error-help" class="hidden text-left bg-red-500/10 border border-red-500/20 p-4 rounded-xl space-y-2">
-                <p class="text-red-400 text-xs font-bold uppercase">Hardware Denied:</p>
-                <ol class="text-[10px] text-slate-400 list-decimal list-inside space-y-1">
-                    <li>Click the <b>Camera Icon</b> in your browser address bar.</li>
-                    <li>Select "Always allow..." or "Reset Permission".</li>
-                    <li>Close other apps using the camera (Zoom, etc).</li>
-                    <li>Refresh the page.</li>
-                </ol>
-            </div>
+    <!-- Mobile Start Overlay -->
+    <div id="overlay" class="fixed inset-0 z-[100] flex flex-col items-center justify-center bg-slate-900 p-8 text-center">
+        <div class="mb-6 w-20 h-20 bg-blue-500/20 rounded-full flex items-center justify-center border border-blue-500/50">
+            <svg class="w-10 h-10 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </div>
+        <h1 class="text-3xl font-bold mb-2">TABLET MOCAP</h1>
+        <p id="status" class="text-slate-400 text-sm mb-8">Please allow camera access when prompted.</p>
+        <button id="start-btn" class="mobile-btn w-full max-w-xs py-5 bg-blue-600 hover:bg-blue-500 rounded-2xl font-black text-xl shadow-2xl active:scale-95 transition-all">
+            ACTIVATE CAMERA
+        </button>
+        <p class="mt-6 text-[10px] text-slate-500 uppercase tracking-widest">Optimized for Android</p>
     </div>
 
-    <!-- Interface -->
-    <div class="fixed inset-0 flex flex-col md:flex-row">
-        <div id="viewport" class="flex-grow relative bg-[#010409]">
-            <div id="rec-tag" class="hidden absolute top-6 right-6 px-4 py-2 rounded-full bg-red-600/20 border border-red-500/40 flex items-center gap-2">
-                <span class="w-2 h-2 bg-red-500 rounded-full recording-pulse"></span>
-                <span class="text-[10px] font-bold uppercase">Recording...</span>
-            </div>
+    <!-- Main App -->
+    <div class="fixed inset-0 flex flex-col">
+        <!-- 3D View -->
+        <div id="viewport" class="relative flex-grow bg-black">
+            <div id="rec-status" class="hidden absolute top-4 left-4 bg-red-600 px-3 py-1 rounded-full text-[10px] font-bold animate-pulse">RECORDING</div>
+            <div class="absolute bottom-4 left-4 text-[10px] text-blue-400/50 font-mono" id="fps-display">FPS: 0</div>
         </div>
 
-        <div class="w-full md:w-80 glass border-t md:border-t-0 md:border-l border-white/5 p-6 flex flex-col gap-6">
-            <div class="relative bg-black aspect-video rounded-xl overflow-hidden ring-1 ring-white/10">
-                <video id="webcam" class="w-full h-full object-cover opacity-40" autoplay playsinline muted></video>
+        <!-- Mobile Controls -->
+        <div class="h-40 bg-slate-900 border-t border-white/10 flex items-center px-6 gap-4">
+            <div class="flex-grow space-y-2">
+                <button id="rec-btn" class="mobile-btn w-full py-4 bg-blue-600 rounded-xl font-bold text-sm uppercase">Start Recording</button>
+                <button id="dl-btn" class="hidden mobile-btn w-full py-3 bg-white text-black rounded-xl font-bold text-[10px] uppercase">Download JSON</button>
             </div>
-
-            <div class="grid grid-cols-2 gap-3">
-                <div class="bg-white/5 p-3 rounded-xl border border-white/5">
-                    <p class="text-[9px] text-slate-500 uppercase">FPS</p>
-                    <p id="fps-counter" class="text-xl font-black text-blue-500">0</p>
-                </div>
-                <div class="bg-white/5 p-3 rounded-xl border border-white/5">
-                    <p class="text-[9px] text-slate-500 uppercase">Frames</p>
-                    <p id="frame-counter" class="text-xl font-black text-emerald-500">0</p>
-                </div>
+            <video id="webcam" playsinline muted></video>
+            <!-- Preview Box -->
+            <div class="w-32 aspect-video bg-black rounded-lg overflow-hidden border border-white/10">
+                <canvas id="mini-preview" class="w-full h-full object-cover opacity-50"></canvas>
             </div>
-
-            <div class="flex-grow space-y-3">
-                <button id="rec-btn" class="w-full py-4 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold text-sm uppercase transition-all shadow-lg shadow-blue-900/20">
-                    Start Recording
-                </button>
-                <button id="dl-btn" class="hidden w-full py-4 bg-white text-black hover:bg-slate-200 rounded-xl font-bold text-sm uppercase transition-all">
-                    Download JSON
-                </button>
-            </div>
-
-            <button onclick="location.reload()" class="text-[10px] text-slate-500 hover:text-white uppercase font-bold transition">Hard Reset System</button>
         </div>
     </div>
 
     <script>
-        let scene, camera, renderer, bodyJoints = {}, handJoints = {L:[], R:[]};
-        let holistic, isRecording = false, dataBuffer = [];
+        let scene, camera, renderer, body = {}, hands = {L:[], R:[]};
+        let holistic, isRecording = false, recordingData = [];
         let frames = 0, lastTime = 0;
 
-        async function initSystem() {
-            const btn = document.getElementById('init-btn');
-            const status = document.getElementById('status-text');
-            const errorHelp = document.getElementById('error-help');
-            
+        async function start() {
+            const status = document.getElementById('status');
+            const btn = document.getElementById('start-btn');
             btn.disabled = true;
-            btn.innerText = "REQUESTING ACCESS...";
-            errorHelp.classList.add('hidden');
+            status.innerText = "Requesting Hardware...";
 
             try {
+                // Mobile specific constraints
                 const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { width: 1280, height: 720, frameRate: { ideal: 60 } } 
+                    video: { 
+                        facingMode: "user",
+                        width: { ideal: 320 },
+                        height: { ideal: 240 }
+                    } 
                 });
+                
                 const video = document.getElementById('webcam');
                 video.srcObject = stream;
                 await video.play();
 
-                status.innerText = "Loading AI Engine...";
+                status.innerText = "Initializing AI Engine...";
                 setup3D();
-                
+
                 holistic = new Holistic({
                     locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
                 });
@@ -118,22 +93,27 @@
 
                 holistic.onResults(onResults);
 
-                const cam = new Camera(video, {
-                    onFrame: async () => { await holistic.send({image: video}); },
-                    width: 640, height: 480
-                });
-                cam.start();
-
+                // Manual loop for better mobile stability
+                async function process() {
+                    await holistic.send({image: video});
+                    // Draw mini preview
+                    const mini = document.getElementById('mini-preview');
+                    const ctx = mini.getContext('2d');
+                    mini.width = video.videoWidth;
+                    mini.height = video.videoHeight;
+                    ctx.drawImage(video, 0, 0);
+                    requestAnimationFrame(process);
+                }
+                
+                process();
                 document.getElementById('overlay').style.display = 'none';
                 animate();
 
             } catch (err) {
-                console.error(err);
-                btn.disabled = false;
-                btn.innerText = "RETRY CAMERA ACCESS";
-                status.innerText = "HARDWARE DENIED";
+                status.innerText = "Error: " + err.message;
                 status.classList.add('text-red-500');
-                errorHelp.classList.remove('hidden');
+                btn.disabled = false;
+                btn.innerText = "TRY AGAIN";
             }
         }
 
@@ -143,33 +123,28 @@
             camera = new THREE.PerspectiveCamera(50, container.clientWidth/container.clientHeight, 0.1, 100);
             camera.position.set(0, 1.2, 3);
 
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
             renderer.setSize(container.clientWidth, container.clientHeight);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
             container.appendChild(renderer.domElement);
 
-            scene.add(new THREE.GridHelper(10, 20, 0x1e293b, 0x0f172a));
-            scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-            const light = new THREE.PointLight(0x3b82f6, 2);
-            light.position.set(5, 5, 5);
-            scene.add(light);
-
-            const bodyMat = new THREE.MeshStandardMaterial({ color: 0x3b82f6 });
-            const handMat = new THREE.MeshStandardMaterial({ color: 0x10b981 });
-            const geo = new THREE.SphereGeometry(0.04, 12, 12);
-            const fingerGeo = new THREE.SphereGeometry(0.015, 8, 8);
+            scene.add(new THREE.GridHelper(10, 10, 0x333333, 0x111111));
+            
+            const bMat = new THREE.MeshBasicMaterial({ color: 0x3b82f6 });
+            const hMat = new THREE.MeshBasicMaterial({ color: 0x10b981 });
+            const geo = new THREE.SphereGeometry(0.05, 8, 8);
+            const fGeo = new THREE.SphereGeometry(0.02, 6, 6);
 
             [11,12,13,14,15,16,23,24,25,26,27,28].forEach(id => {
-                const m = new THREE.Mesh(geo, bodyMat);
+                const m = new THREE.Mesh(geo, bMat);
                 scene.add(m);
-                bodyJoints[id] = m;
+                body[id] = m;
             });
 
             for(let i=0; i<21; i++) {
-                const l = new THREE.Mesh(fingerGeo, handMat);
-                const r = new THREE.Mesh(fingerGeo, handMat);
+                const l = new THREE.Mesh(fGeo, hMat);
+                const r = new THREE.Mesh(fGeo, hMat);
                 scene.add(l); scene.add(r);
-                handJoints.L.push(l); handJoints.R.push(r);
+                hands.L.push(l); hands.R.push(r);
             }
         }
 
@@ -177,34 +152,32 @@
             frames++;
             const now = performance.now();
             if(now - lastTime > 1000) {
-                document.getElementById('fps-counter').innerText = frames;
-                frames = 0;
-                lastTime = now;
+                document.getElementById('fps-display').innerText = "FPS: " + frames;
+                frames = 0; lastTime = now;
             }
 
             if(res.poseLandmarks) {
-                Object.keys(bodyJoints).forEach(id => {
+                Object.keys(body).forEach(id => {
                     const lm = res.poseLandmarks[id];
-                    bodyJoints[id].position.set((0.5 - lm.x)*3, (0.5 - lm.y)*3 + 1, -lm.z*2);
+                    body[id].position.set((0.5 - lm.x)*3, (0.5 - lm.y)*3 + 1, -lm.z*2);
                 });
             }
 
-            const mapHand = (lms, meshes) => {
+            const map = (lms, msh) => {
                 if(lms) {
                     lms.forEach((lm, i) => {
-                        meshes[i].visible = true;
-                        meshes[i].position.set((0.5 - lm.x)*3, (0.5 - lm.y)*3 + 1, -lm.z*2);
+                        msh[i].visible = true;
+                        msh[i].position.set((0.5 - lm.x)*3, (0.5 - lm.y)*3 + 1, -lm.z*2);
                     });
                 } else {
-                    meshes.forEach(m => m.visible = false);
+                    msh.forEach(m => m.visible = false);
                 }
             };
-            mapHand(res.leftHandLandmarks, handJoints.L);
-            mapHand(res.rightHandLandmarks, handJoints.R);
+            map(res.leftHandLandmarks, hands.L);
+            map(res.rightHandLandmarks, hands.R);
 
             if(isRecording) {
-                dataBuffer.push({ t: Date.now(), p: res.poseLandmarks, lh: res.leftHandLandmarks, rh: res.rightHandLandmarks });
-                document.getElementById('frame-counter').innerText = dataBuffer.length;
+                recordingData.push({ t: Date.now(), p: res.poseLandmarks, lh: res.leftHandLandmarks, rh: res.rightHandLandmarks });
             }
         }
 
@@ -213,34 +186,33 @@
             renderer.render(scene, camera);
         }
 
-        document.getElementById('init-btn').onclick = initSystem;
+        document.getElementById('start-btn').onclick = start;
 
         document.getElementById('rec-btn').onclick = function() {
             isRecording = !isRecording;
-            const tag = document.getElementById('rec-tag');
+            const rs = document.getElementById('rec-status');
             const dl = document.getElementById('dl-btn');
             if(isRecording) {
-                dataBuffer = [];
+                recordingData = [];
                 this.innerText = "Stop Capture";
                 this.classList.replace('bg-blue-600', 'bg-red-600');
-                tag.classList.remove('hidden');
+                rs.classList.remove('hidden');
                 dl.classList.add('hidden');
             } else {
                 this.innerText = "Start Recording";
                 this.classList.replace('bg-red-600', 'bg-blue-600');
-                tag.classList.add('hidden');
-                if(dataBuffer.length > 0) dl.classList.remove('hidden');
+                rs.classList.add('hidden');
+                if(recordingData.length > 0) dl.classList.remove('hidden');
             }
         };
 
         document.getElementById('dl-btn').onclick = () => {
-            const blob = new Blob([JSON.stringify(dataBuffer)], { type: 'application/json' });
+            const blob = new Blob([JSON.stringify(recordingData)], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `mocap_${Date.now()}.json`;
+            a.download = `tablet_mocap_${Date.now()}.json`;
             a.click();
-            URL.revokeObjectURL(url);
         };
 
         window.onresize = () => {
